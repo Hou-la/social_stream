@@ -276,6 +276,11 @@
 		// Up to +30% jitter, so sources refused together do not all come back in the same second.
 		return Math.round(delay * (1 + Math.random() * 0.3));
 	}
+	function refusalMessage(reason) {
+		return reason === 'INVALID_KEY' ? 'Event key refused. Create a new key in Hou.la Studio.' :
+			reason === 'RATE_LIMITED' ? 'Too many attempts.' :
+			reason === 'TOO_MANY_CONNECTIONS' ? 'This key has too many connections. Close another source using it.' : 'Hou.la disconnected this source.';
+	}
 	function clearRetry() {
 		clearTimeout(retryTimer);
 		retryTimer = null;
@@ -343,15 +348,21 @@
 				scheduleRetry('SERVER_DISCONNECT', 'Disconnected by Hou.la.');
 			} else sourceStatus('connecting', 'Disconnected. Reconnecting...');
 		});
-		current.on('connect_error', function () {
-			if (socket === current) sourceStatus('error', 'Unable to connect to Hou.la. Check your connection and event key.');
+		current.on('connect_error', function (err) {
+			if (socket !== current) return;
+			// A handshake refused by the server leaves the socket inactive: Socket.IO
+			// will not try again, so schedule our own retry. Network errors keep it
+			// active and Socket.IO keeps reconnecting.
+			if (current.active === false) {
+				var reason = err && err.message ? String(err.message) : 'ERROR';
+				scheduleRetry(reason, refusalMessage(reason));
+				return;
+			}
+			sourceStatus('error', 'Unable to connect to Hou.la. Check your connection and event key.');
 		});
 		current.on('error', function (reason) {
 			if (socket !== current) return;
-			var message = reason === 'INVALID_KEY' ? 'Event key refused. Create a new key in Hou.la Studio.' :
-				reason === 'RATE_LIMITED' ? 'Too many attempts.' :
-				reason === 'TOO_MANY_CONNECTIONS' ? 'This key has too many connections. Close another source using it.' : 'Hou.la disconnected this source.';
-			scheduleRetry(String(reason), message);
+			scheduleRetry(String(reason), refusalMessage(reason));
 		});
 	}
 	function boot() {
